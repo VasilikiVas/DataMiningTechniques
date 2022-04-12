@@ -50,6 +50,7 @@ class DataLoader:
         self.all_vars = self.raw_data.variable.unique()
         self.dates = pd.date_range(start=self.raw_data.time.min().round('D'),
                                    end=self.raw_data.time.max().round('D'), freq='D')
+        self.ids = self.raw_data['id'].unique()
         self.mood_range = [*range(1, 11, 1)]
         self.arousal_valence_range = [*range(-2, 3, 1)]
         self.time_features = ['screen', 'appCat.builtin', 'appCat.communication',
@@ -149,8 +150,7 @@ class DataLoader:
                                        index=pd.MultiIndex.from_product([data.id.unique(), self.dates], names=["ID", "time"]),
                                        columns=self.all_vars)
 
-        ids = data['id'].unique()
-        for i in ids:
+        for i in self.ids:
             id_used = data[data.id == i]
             id_used.index = id_used.time
 
@@ -253,16 +253,22 @@ class DataLoader:
 
         pass
 
-    def create_train_test_split(self, data):
+    def create_train_test_split(self, data, window_size=3):
         """
         Create training and testing split by aggregating features values over certain window size.
         :param data: Data from which instances need to be created for the split.
         :return: Training and Testing split.
         """
+        
+        print(data.iloc[0, 0])
+
+        for i in self.ids:
+            series = data.loc[data.iloc[:, 0] == i]
+            for start_row in range(len(series) - window_size + 1):
+                window = series[start_row:start_row + window_size]
+                print(window)
 
         # Standardize data
-
-        pass
 
 
 if __name__ == "__main__":
@@ -274,6 +280,7 @@ if __name__ == "__main__":
     data = data_loader.get_structured_data(data)
     data = data_loader.remove_unreported_periods(data)
     show_feature_distribution(data, data_loader.all_vars, True)
-    data = data_loader.combine_features(data)
+    #data = data_loader.combine_features(data)
     data = data_loader.interpolate_values(data)
+    data_loader.create_train_test_split(data)
 
