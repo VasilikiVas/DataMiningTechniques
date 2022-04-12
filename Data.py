@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import math
-
+from scipy.stats.mstats import spearmanr
 
 def get_raw_data():
     """
@@ -250,8 +250,23 @@ class DataLoader:
         :param data: Data from which significant features need to be determined.
         :return: Analysis of feature significance.
         """
+        uncorrelated = []
 
-        pass
+        for attribute in self.all_vars:
+            if attribute != 'mood':
+                # calculate spearman's correlation
+                coef, p = spearmanr(data['mood'], data[attribute])
+                #print(f'Spearmans correlation coefficient of {attribute}: %.3f' % coef)
+                # interpret the significance
+                alpha = 0.1
+                if p > alpha:
+                    #print(f'Samples are uncorrelated for attribute: {attribute} (fail to reject H0) p=%.3f' % p)
+                    uncorrelated.append(attribute)
+                else:
+                    print(f'Spearmans correlation coefficient of {attribute}: %.3f' % coef)
+                    print(f'Samples are correlated for attribute: {attribute} (reject H0) p=%.3f' % p)
+        print(uncorrelated)
+
 
     def create_train_test_split(self, data, window_size=3):
         """
@@ -282,5 +297,5 @@ if __name__ == "__main__":
     show_feature_distribution(data, data_loader.all_vars, True)
     #data = data_loader.combine_features(data)
     data = data_loader.interpolate_values(data)
-    data_loader.create_train_test_split(data)
+    data_loader.feature_importance_analysis(data)
 
