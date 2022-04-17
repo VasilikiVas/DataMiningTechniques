@@ -1,8 +1,12 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import csv
 import math
 from scipy.stats.mstats import spearmanr
+from collections import Counter
+from datetime import timedelta
+
 
 def get_raw_data():
     """
@@ -45,8 +49,8 @@ def show_feature_distribution(data, features, structured_data=False):
 class DataLoader:
     def __init__(self):
         self.raw_data = get_raw_data()
-        self.mean_vars = self.raw_data.variable.unique()[0:3]
-        self.sum_vars = self.raw_data.variable.unique()[3:]
+        self.mean_vars = self.raw_data.variable.unique()[0:4]
+        self.sum_vars = self.raw_data.variable.unique()[4:]
         self.all_vars = self.raw_data.variable.unique()
         self.dates = pd.date_range(start=self.raw_data.time.min().round('D'),
                                    end=self.raw_data.time.max().round('D'), freq='D')
@@ -54,14 +58,15 @@ class DataLoader:
         self.mood_range = [*range(1, 11, 1)]
         self.arousal_valence_range = [*range(-2, 3, 1)]
         self.time_features = ['screen', 'appCat.builtin', 'appCat.communication',
-                         'appCat.entertainment', 'appCat.finance', 'appCat.game',
-                         'appCat.office', 'appCat.other', 'appCat.social', 'appCat.travel',
-                         'appCat.unknown', 'appCat.utilities', 'appCat.weather']
+                              'appCat.entertainment', 'appCat.finance', 'appCat.game',
+                              'appCat.office', 'appCat.other', 'appCat.social', 'appCat.travel',
+                              'appCat.unknown', 'appCat.utilities', 'appCat.weather']
+        self.active_periods = None
 
     def remove_invalid_data(self, raw_data):
         """
         Count and remove invalid and NaN values.
-        :param raw_data: Raw data without any preproccessing.
+        :param raw_data: Raw data without any preprocessing.
         :return: preprocessed data without NaN values or values outside the defined range.
         """
 
@@ -110,32 +115,61 @@ class DataLoader:
 
         # Get summary statistics
         # Show number of entries per attribute
-        pd.DataFrame(preprocessed_data['variable'].value_counts()).plot.bar(xlabel='Attribute', ylabel='Number of Entries',
-                                                                            title="Histogram of Attributes", legend=None,
+        pd.DataFrame(preprocessed_data['variable'].value_counts()).plot.bar(xlabel='Attribute',
+                                                                            ylabel='Number of Entries',
+                                                                            title="Histogram of Attributes",
+                                                                            legend=None,
                                                                             figsize=(10, 7))
         plt.show()
         plt.clf()
 
         return preprocessed_data
 
-    def remove_outliers(self, data):
+    def get_split(self, data):
+
+        nr_days = list(Counter(self.active_periods.get_level_values(0)).values())
+        nr_days_train = [math.ceil(0.8 * number) for number in nr_days]
+
+        start = [self.active_periods[0][1].date()]
+        end = []
+
+        id = self.ids[0]
+        end_temp = None
+        for row in self.active_periods:
+            if row[0] != id:
+                id = row[0]
+                start.append(row[1].date())
+                end.append(end_temp)
+            else:
+                end_temp = row[1].date()
+
+        end.append(end_temp)
+
+        train_data = pd.DataFrame(columns=data.columns)
+        test_data = pd.DataFrame(columns=data.columns)
+        for id, days_train, start_date, end_date in zip(self.ids, nr_days_train, start, end):
+            id_data = data[data['id'] == id]
+            train_data = pd.concat([train_data, id_data[(id_data['time'].dt.date >= start_date) & (id_data['time'].dt.date <= start_date + timedelta(days=days_train))]])
+            test_data = pd.concat([test_data, id_data[(id_data['time'].dt.date >= start_date + timedelta(days=days_train) + timedelta(days=1)) & (id_data['time'].dt.date <= end_date)]])
+
+        return train_data, test_data
+
+    def remove_outliers(self, data, train=True):
         """
         Remove values outside defined quantiles.
         :param data: Data to remove outliers from.
         :return Data without outliers.
         """
 
-        with pd.option_context('display.max_rows', None, 'display.max_columns', None):
-            print(data.groupby('variable', sort=False).describe())
+        self.q_lows = np.zeros(self.time_features)
+        self.q_highs = np.zeros(self.time_features)
+        for index, variable_name in enumerate(self.time_features):
+            if train:
+                self.q_lows[index] = data.loc[data['variable'] == variable_name].value.quantile(0.00)
+                self.q_highs[index] = data.loc[data['variable'] == variable_name].value.quantile(0.75)
 
-        for variable_name in self.time_features:
-            q_low = data.loc[data['variable'] == variable_name].value.quantile(0.00)
-            q_high = data.loc[data['variable'] == variable_name].value.quantile(0.75)
             data = data.drop(data[(data.variable == variable_name) & (
-                    (data.value < q_low) | (data.value > q_high))].index)
-
-        with pd.option_context('display.max_rows', None, 'display.max_columns', None):
-            print(data.groupby('variable', sort=False).describe())
+                    (data.value < self.q_lows[index]) | (data.value > self.q_highs[index]))].index)
 
         return data
 
@@ -147,7 +181,8 @@ class DataLoader:
         """
 
         structured_data = pd.DataFrame(np.nan,
-                                       index=pd.MultiIndex.from_product([data.id.unique(), self.dates], names=["ID", "time"]),
+                                       index=pd.MultiIndex.from_product([data.id.unique(), self.dates],
+                                                                        names=["id", "time"]),
                                        columns=self.all_vars)
 
         for i in self.ids:
@@ -166,32 +201,7 @@ class DataLoader:
                 for k in used_dates:
                     structured_data.loc[i, j].loc[k] = sub_df[k]
 
-        structured_data.to_csv('structured_data.csv')
-
         return structured_data
-
-    def remove_unreported_periods(self, data):
-        """
-        Remove days with large amounts of unreported data.
-        :param data: Data from which unreported periods need to be removed.
-        :return: Dataframe with only periods from user with abundant values.
-        """
-
-        data_compact = data.drop(data[(np.isnan(data['screen']) |
-                                       np.isnan(data['appCat.builtin']) |
-                                       np.isnan(data['appCat.communication']) |
-                                       np.isnan(data['appCat.entertainment']) |
-                                       np.isnan(data['activity']) |
-                                       np.isnan(data['appCat.social']) |
-                                       np.isnan(data['appCat.other']) |
-                                       np.isnan(data['appCat.office']) |
-                                       np.isnan(data['mood']) |
-                                       np.isnan(data['circumplex.arousal']) |
-                                       np.isnan(data['circumplex.valence']))].index)
-
-        data_compact.to_csv('data_compact.csv')
-
-        return data_compact
 
     def combine_features(self, data):
         """
@@ -200,24 +210,38 @@ class DataLoader:
         :return: Dataframe with combined features.
         """
 
-        nan_values = data.isna().sum()
-        #print(nan_values)
-
-        data['appCat.money'] = data[['appCat.office', 'appCat.finance']].sum(axis=1, skipna=True)
-        data['appCat.leisure'] = data[['appCat.game', 'appCat.entertainment', 'appCat.social']].sum(axis=1, skipna=True)
-        data['appCat.convenience'] = data[['appCat.travel', 'appCat.utilities', 'appCat.weather']].sum(axis=1, skipna=True)
-        data['appCat.other'] = data[['appCat.other', 'appCat.unknown']].sum(axis=1, skipna=True)
-        column_names = ['appCat.entertainment', 'appCat.finance', 'appCat.game', 'appCat.office', 'appCat.social',
-                        'appCat.travel', 'appCat.unknown', 'appCat.utilities', 'appCat.weather']
+        data['appCat.work'] = data[['appCat.office', 'appCat.finance']].sum(axis=1, skipna=True, min_count=1)
+        data['appCat.leisure'] = data[['appCat.game', 'appCat.entertainment']].sum(axis=1, skipna=True, min_count=1)
+        data['appCat.utility'] = data[['appCat.travel', 'appCat.utilities', 'appCat.weather']].sum(axis=1, skipna=True,
+                                                                                                   min_count=1)
+        data['appCat.other'] = data[['appCat.other', 'appCat.unknown']].sum(axis=1, skipna=True, min_count=1)
+        column_names = ['appCat.entertainment', 'appCat.finance', 'appCat.game', 'appCat.office', 'appCat.travel',
+                        'appCat.unknown', 'appCat.utilities', 'appCat.weather']
 
         data_new_features = data.drop(columns=column_names, axis=1)
 
-        data_new_features.to_csv('data_new_features.csv')
-
-        nan_values = data_new_features.isna().sum()
-        #print(nan_values)
-
         return data_new_features
+
+    def remove_unreported_periods(self, data):
+        """
+        Remove days with large amounts of unreported data.
+        :param data: Data from which unreported periods need to be removed.
+        :return: Dataframe with only periods from user with abundant values.
+        """
+
+        """
+        data_compact = data.drop(data[(np.isnan(data['screen']) |
+                                       np.isnan(data['appCat.builtin']) |
+                                       np.isnan(data['appCat.communication']) |
+                                       np.isnan(data['appCat.entertainment']) |
+                                       np.isnan(data['activity']) |
+                                       np.isnan(data['appCat.social']))].index)
+        """
+
+        data_compact = data.dropna(axis=0, thresh=9)
+        self.active_periods = data_compact.index
+
+        return data_compact
 
     def add_features(self, raw_data, data):
         """
@@ -236,13 +260,15 @@ class DataLoader:
         :return: Dataframe with interpolated values.
         """
 
-        data_interpolated = data.interpolate()
-        data_interpolated.to_csv('data_interpolated.csv')
+        for var in self.mean_vars:
+            data[var] = data[var].interpolate().ffill().bfill()
 
-        nan_values = data_interpolated.isna().sum()
-        #print(nan_values)
+        data = data.fillna(0)
 
-        return data_interpolated
+        nan_values = data.isna().sum()
+        # print(nan_values)
+
+        return data
 
     def feature_importance_analysis(self, data):
         """
@@ -252,50 +278,76 @@ class DataLoader:
         """
         uncorrelated = []
 
-        for attribute in self.all_vars:
+        for attribute in data.columns:
             if attribute != 'mood':
                 # calculate spearman's correlation
                 coef, p = spearmanr(data['mood'], data[attribute])
-                #print(f'Spearmans correlation coefficient of {attribute}: %.3f' % coef)
+                # print(f'Spearmans correlation coefficient of {attribute}: %.3f' % coef)
                 # interpret the significance
                 alpha = 0.1
                 if p > alpha:
-                    #print(f'Samples are uncorrelated for attribute: {attribute} (fail to reject H0) p=%.3f' % p)
+                    # print(f'Samples are uncorrelated for attribute: {attribute} (fail to reject H0) p=%.3f' % p)
                     uncorrelated.append(attribute)
                 else:
                     print(f'Spearmans correlation coefficient of {attribute}: %.3f' % coef)
                     print(f'Samples are correlated for attribute: {attribute} (reject H0) p=%.3f' % p)
         print(uncorrelated)
 
-
-    def create_train_test_split(self, data, window_size=3):
+    def window_aggregation(self, data, csv_name, window_size=3):
         """
         Create training and testing split by aggregating features values over certain window size.
         :param data: Data from which instances need to be created for the split.
         :return: Training and Testing split.
         """
-        
-        print(data.iloc[0, 0])
 
-        for i in self.ids:
-            series = data.loc[data.iloc[:, 0] == i]
-            for start_row in range(len(series) - window_size + 1):
-                window = series[start_row:start_row + window_size]
-                print(window)
+        with open(csv_name, "w", newline='') as csv_file:
+            for i in self.ids:
+                series = data.loc[[i]]
+                for start_row in range(len(series) - window_size + 1):
+                    window = series[start_row:start_row + window_size]
+                    window = window.agg({'mood': 'mean', 'circumplex.arousal': 'mean', 'circumplex.valence': 'mean',
+                                         'activity': 'mean', 'screen': 'sum', 'call': 'sum', 'sms': 'sum',
+                                         'appCat.builtin': 'sum', 'appCat.communication': 'sum', 'appCat.other': 'sum',
+                                         'appCat.social': 'sum', 'appCat.work': 'sum', 'appCat.leisure': 'sum',
+                                         'appCat.utility': 'sum'})
+
+                    write = csv.writer(csv_file)
+                    write.writerow(window.values.tolist())
 
         # Standardize data
 
 
 if __name__ == "__main__":
+    # Get raw data
     data_loader = DataLoader()
-    data = data_loader.raw_data
-    data = data_loader.remove_invalid_data(data)
-    data = data_loader.remove_outliers(data)
-    show_feature_distribution(data, data_loader.all_vars, False)
-    data = data_loader.get_structured_data(data)
-    data = data_loader.remove_unreported_periods(data)
-    show_feature_distribution(data, data_loader.all_vars, True)
-    #data = data_loader.combine_features(data)
-    data = data_loader.interpolate_values(data)
-    data_loader.feature_importance_analysis(data)
+    raw_data = data_loader.raw_data
+    raw_data = data_loader.remove_invalid_data(raw_data)
 
+    # Prepare appropriate active period windows
+    preprocessed_data = data_loader.get_structured_data(raw_data)
+    preprocessed_data = data_loader.combine_features(preprocessed_data)
+    preprocessed_data = data_loader.remove_unreported_periods(preprocessed_data)
+
+    # split data
+    train_data, test_data = data_loader.get_split(raw_data)
+
+    # prepare train data
+    train_data = data_loader.remove_outliers(train_data, train=True)
+    show_feature_distribution(train_data, train_data.columns, False)
+    train_data = data_loader.get_structured_data(train_data)
+    train_data = data_loader.combine_features(train_data)
+    train_data = data_loader.remove_unreported_periods(train_data)
+    train_data = data_loader.interpolate_values(train_data)
+    data_loader.window_aggregation(train_data, "train_input.csv")
+
+    # prepare test data
+    test_data = data_loader.remove_outliers(test_data, train=False)
+    show_feature_distribution(test_data, test_data.columns, False)
+    test_data = data_loader.get_structured_data(test_data)
+    test_data = data_loader.combine_features(test_data)
+    test_data = data_loader.remove_unreported_periods(test_data)
+    test_data = data_loader.interpolate_values(test_data)
+    data_loader.window_aggregation(test_data, "test_input.csv")
+
+    # Analyze features
+    data_loader.feature_importance_analysis(train_data)
