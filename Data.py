@@ -46,6 +46,30 @@ def show_feature_distribution(data, features, structured_data=False):
     plt.clf()
 
 
+def feature_importance_analysis(data):
+    """
+    Determine significant features by means of statistical tests.
+    :param data: Data from which significant features need to be determined.
+    :return: Analysis of feature significance.
+    """
+    uncorrelated = []
+
+    for attribute in data.columns:
+        if attribute != 'mood':
+            # calculate spearman's correlation
+            coef, p = spearmanr(data['mood'], data[attribute])
+            # print(f'Spearmans correlation coefficient of {attribute}: %.3f' % coef)
+            # interpret the significance
+            alpha = 0.1
+            if p > alpha:
+                # print(f'Samples are uncorrelated for attribute: {attribute} (fail to reject H0) p=%.3f' % p)
+                uncorrelated.append(attribute)
+            else:
+                print(f'Spearmans correlation coefficient of {attribute}: %.3f' % coef)
+                print(f'Samples are correlated for attribute: {attribute} (reject H0) p=%.3f' % p)
+    print(uncorrelated)
+
+
 class DataLoader:
     def __init__(self):
         self.raw_data = get_raw_data()
@@ -62,6 +86,8 @@ class DataLoader:
                               'appCat.office', 'appCat.other', 'appCat.social', 'appCat.travel',
                               'appCat.unknown', 'appCat.utilities', 'appCat.weather']
         self.active_periods = None
+        self.q_lows = np.zeros(len(self.time_features))
+        self.q_highs = np.zeros(len(self.time_features))
 
     def remove_invalid_data(self, raw_data):
         """
@@ -149,8 +175,11 @@ class DataLoader:
         test_data = pd.DataFrame(columns=data.columns)
         for id, days_train, start_date, end_date in zip(self.ids, nr_days_train, start, end):
             id_data = data[data['id'] == id]
-            train_data = pd.concat([train_data, id_data[(id_data['time'].dt.date >= start_date) & (id_data['time'].dt.date <= start_date + timedelta(days=days_train))]])
-            test_data = pd.concat([test_data, id_data[(id_data['time'].dt.date >= start_date + timedelta(days=days_train) + timedelta(days=1)) & (id_data['time'].dt.date <= end_date)]])
+            train_data = pd.concat([train_data, id_data[(id_data['time'].dt.date >= start_date) & (
+                        id_data['time'].dt.date <= start_date + timedelta(days=days_train))]])
+            test_data = pd.concat([test_data, id_data[
+                (id_data['time'].dt.date >= start_date + timedelta(days=days_train) + timedelta(days=1)) & (
+                            id_data['time'].dt.date <= end_date)]])
 
         return train_data, test_data
 
@@ -161,8 +190,6 @@ class DataLoader:
         :return Data without outliers.
         """
 
-        self.q_lows = np.zeros(self.time_features)
-        self.q_highs = np.zeros(self.time_features)
         for index, variable_name in enumerate(self.time_features):
             if train:
                 self.q_lows[index] = data.loc[data['variable'] == variable_name].value.quantile(0.00)
@@ -262,45 +289,20 @@ class DataLoader:
 
         for var in self.mean_vars:
             data[var] = data[var].interpolate().ffill().bfill()
-
         data = data.fillna(0)
 
-        nan_values = data.isna().sum()
-        # print(nan_values)
+        #data.to_csv("interpolated_test_values.csv")
 
         return data
 
-    def feature_importance_analysis(self, data):
+    def window_aggregation(self, data, csv_input_name, csv_output_name, window_size=3):
         """
-        Determine significant features by means of statistical tests.
-        :param data: Data from which significant features need to be determined.
-        :return: Analysis of feature significance.
-        """
-        uncorrelated = []
-
-        for attribute in data.columns:
-            if attribute != 'mood':
-                # calculate spearman's correlation
-                coef, p = spearmanr(data['mood'], data[attribute])
-                # print(f'Spearmans correlation coefficient of {attribute}: %.3f' % coef)
-                # interpret the significance
-                alpha = 0.1
-                if p > alpha:
-                    # print(f'Samples are uncorrelated for attribute: {attribute} (fail to reject H0) p=%.3f' % p)
-                    uncorrelated.append(attribute)
-                else:
-                    print(f'Spearmans correlation coefficient of {attribute}: %.3f' % coef)
-                    print(f'Samples are correlated for attribute: {attribute} (reject H0) p=%.3f' % p)
-        print(uncorrelated)
-
-    def window_aggregation(self, data, csv_name, window_size=3):
-        """
-        Create training and testing split by aggregating features values over certain window size.
+        Aggregate features values over certain window size and create input and output files.
         :param data: Data from which instances need to be created for the split.
-        :return: Training and Testing split.
+        :return: input and output files.
         """
 
-        with open(csv_name, "w", newline='') as csv_file:
+        with open(csv_input_name, "w", newline='') as csv_file:
             for i in self.ids:
                 series = data.loc[[i]]
                 for start_row in range(len(series) - window_size + 1):
@@ -315,6 +317,15 @@ class DataLoader:
                     write.writerow(window.values.tolist())
 
         # Standardize data
+
+        output = []
+        for i in self.ids:
+            series = data.loc[[i]]
+            output.append(series['mood'][3:len(series)].values)
+
+        with open(csv_output_name, "w", newline='') as csv_file:
+            write = csv.writer(csv_file)
+            write.writerow(output)
 
 
 if __name__ == "__main__":
@@ -333,21 +344,21 @@ if __name__ == "__main__":
 
     # prepare train data
     train_data = data_loader.remove_outliers(train_data, train=True)
-    show_feature_distribution(train_data, train_data.columns, False)
+    show_feature_distribution(train_data, data_loader.all_vars, False)
     train_data = data_loader.get_structured_data(train_data)
     train_data = data_loader.combine_features(train_data)
     train_data = data_loader.remove_unreported_periods(train_data)
     train_data = data_loader.interpolate_values(train_data)
-    data_loader.window_aggregation(train_data, "train_input.csv")
+    data_loader.window_aggregation(train_data, "train_input.csv", "train_output.csv")
 
     # prepare test data
     test_data = data_loader.remove_outliers(test_data, train=False)
-    show_feature_distribution(test_data, test_data.columns, False)
+    show_feature_distribution(test_data, data_loader.all_vars, False)
     test_data = data_loader.get_structured_data(test_data)
     test_data = data_loader.combine_features(test_data)
     test_data = data_loader.remove_unreported_periods(test_data)
     test_data = data_loader.interpolate_values(test_data)
-    data_loader.window_aggregation(test_data, "test_input.csv")
+    data_loader.window_aggregation(test_data, "test_input.csv", "test_output.csv")
 
     # Analyze features
-    data_loader.feature_importance_analysis(train_data)
+    feature_importance_analysis(train_data)
