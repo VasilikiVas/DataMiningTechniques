@@ -291,41 +291,53 @@ class DataLoader:
             data[var] = data[var].interpolate().ffill().bfill()
         data = data.fillna(0)
 
-        #data.to_csv("interpolated_test_values.csv")
-
         return data
 
-    def window_aggregation(self, data, csv_input_name, csv_output_name, window_size=3):
+    def window_aggregation(self, data, set='train', window_size=3):
         """
         Aggregate features values over certain window size and create input and output files.
         :param data: Data from which instances need to be created for the split.
         :return: input and output files.
         """
 
-        with open(csv_input_name, "w", newline='') as csv_file:
-            for i in self.ids:
-                series = data.loc[[i]]
-                for start_row in range(len(series) - window_size + 1):
-                    window = series[start_row:start_row + window_size]
-                    window = window.agg({'mood': 'mean', 'circumplex.arousal': 'mean', 'circumplex.valence': 'mean',
-                                         'activity': 'mean', 'screen': 'sum', 'call': 'sum', 'sms': 'sum',
-                                         'appCat.builtin': 'sum', 'appCat.communication': 'sum', 'appCat.other': 'sum',
-                                         'appCat.social': 'sum', 'appCat.work': 'sum', 'appCat.leisure': 'sum',
-                                         'appCat.utility': 'sum'})
+        input = []
+        input_temporal = []
+        output = []
+        output_temporal = []
 
-                    write = csv.writer(csv_file)
-                    write.writerow(window.values.tolist())
+        for i in self.ids:
+            series = data.loc[[i]]
+            for start_row in range(len(series) - window_size + 1):
+                window = series[start_row:start_row + window_size]
+                window = window.agg({'mood': 'mean', 'circumplex.arousal': 'mean', 'circumplex.valence': 'mean',
+                                     'activity': 'mean', 'screen': 'sum', 'call': 'sum', 'sms': 'sum',
+                                     'appCat.builtin': 'sum', 'appCat.communication': 'sum', 'appCat.other': 'sum',
+                                     'appCat.social': 'sum', 'appCat.work': 'sum', 'appCat.leisure': 'sum',
+                                     'appCat.utility': 'sum'})
+
+                input.append(window.values.tolist())
+
+            for row in range(len(series) - 1):
+                input_temporal.append(series.iloc[[row]].values.tolist()[0])
+
+        for i in self.ids:
+            series = data.loc[[i]]
+            output += series['mood'][window_size:len(series)].values.tolist()
+            output_temporal += series['mood'][1:len(series)].values.tolist()
 
         # Standardize data
 
-        output = []
-        for i in self.ids:
-            series = data.loc[[i]]
-            output.append(series['mood'][3:len(series)].values)
+        input = pd.DataFrame(input)
+        input.to_csv(set + "_input.csv", index=False, header=False)
 
-        with open(csv_output_name, "w", newline='') as csv_file:
-            write = csv.writer(csv_file)
-            write.writerow(output)
+        input_temporal = pd.DataFrame(input_temporal)
+        input_temporal.to_csv(set + "_input_temporal.csv", index=False, header=False)
+
+        output = pd.DataFrame(output)
+        output.to_csv(set + "_output.csv", index=False, header=False)
+
+        output_temporal = pd.DataFrame(output_temporal)
+        output_temporal.to_csv(set + "_output_temporal.csv", index=False, header=False)
 
 
 if __name__ == "__main__":
@@ -349,7 +361,7 @@ if __name__ == "__main__":
     train_data = data_loader.combine_features(train_data)
     train_data = data_loader.remove_unreported_periods(train_data)
     train_data = data_loader.interpolate_values(train_data)
-    data_loader.window_aggregation(train_data, "train_input.csv", "train_output.csv")
+    data_loader.window_aggregation(train_data, set="train")
 
     # prepare test data
     test_data = data_loader.remove_outliers(test_data, train=False)
@@ -358,7 +370,7 @@ if __name__ == "__main__":
     test_data = data_loader.combine_features(test_data)
     test_data = data_loader.remove_unreported_periods(test_data)
     test_data = data_loader.interpolate_values(test_data)
-    data_loader.window_aggregation(test_data, "test_input.csv", "test_output.csv")
+    data_loader.window_aggregation(test_data, set="test")
 
     # Analyze features
     feature_importance_analysis(train_data)
