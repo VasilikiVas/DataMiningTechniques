@@ -6,6 +6,7 @@ import math
 from scipy.stats.mstats import spearmanr
 from collections import Counter
 from datetime import timedelta
+from sklearn.preprocessing import MinMaxScaler
 
 
 def get_raw_data():
@@ -88,6 +89,8 @@ class DataLoader:
         self.active_periods = None
         self.q_lows = np.zeros(len(self.time_features))
         self.q_highs = np.zeros(len(self.time_features))
+        self.scaler = MinMaxScaler()
+        self.scaler_temporal = MinMaxScaler()
 
     def remove_invalid_data(self, raw_data):
         """
@@ -307,7 +310,7 @@ class DataLoader:
 
         for i in self.ids:
             series = data.loc[[i]]
-            for start_row in range(len(series) - window_size + 1):
+            for start_row in range(len(series) - window_size):
                 window = series[start_row:start_row + window_size]
                 window = window.agg({'mood': 'mean', 'circumplex.arousal': 'mean', 'circumplex.valence': 'mean',
                                      'activity': 'mean', 'screen': 'sum', 'call': 'sum', 'sms': 'sum',
@@ -326,6 +329,12 @@ class DataLoader:
             output_temporal += series['mood'][1:len(series)].values.tolist()
 
         # Standardize data
+        if set == "train":
+            self.scaler.fit(input)
+            self.scaler_temporal.fit(input_temporal)
+
+        input = self.scaler.transform(input)
+        input_temporal = self.scaler_temporal.transform(input_temporal)
 
         input = pd.DataFrame(input)
         input.to_csv(set + "_input.csv", index=False, header=False)
