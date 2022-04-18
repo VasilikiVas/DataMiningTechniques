@@ -1,12 +1,11 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import csv
 import math
 from scipy.stats.mstats import spearmanr
 from collections import Counter
 from datetime import timedelta
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, Normalizer
 
 
 def get_raw_data():

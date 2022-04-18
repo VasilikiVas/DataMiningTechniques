@@ -2,7 +2,8 @@
 from sklearn.svm import SVR
 from sklearn.model_selection import cross_val_score
 from sklearn.model_selection import KFold
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.model_selection import GridSearchCV
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -133,12 +134,26 @@ class LSTM_optimization:
         plt.close()
 
 
-def train_svm_model(X, y):
-    model = SVR(kernel='rbf')
-    model.fit(X, y)
-    kfold = KFold(n_splits=5, shuffle=True, random_state=0)
-    scores = cross_val_score(model, X, y, cv=kfold)
-    return model, scores
+def cross_validate_svm_model(trainX, trainY):
+    parameters = [
+        {"kernel": ["rbf"], "gamma": [1e-1, 1e-2, 1e-3, 1e-4], "C": [0.1, 1, 10, 100, 1000]},
+        {"kernel": ["linear"], "C": [0.1, 1, 10, 100, 1000]},
+    ]
+
+    k_fold = KFold(n_splits=5, shuffle=True, random_state=0)
+    model = GridSearchCV(SVR(), parameters, cv=k_fold, scoring='neg_mean_absolute_error')
+    model.fit(trainX, trainY)
+
+    print(model.best_params_)
+
+
+def fit_predict_svr(trainX, trainY, testX, testY):
+    model = SVR(kernel='rbf', C=10, gamma=0.1)
+    model.fit(trainX, trainY)
+    predictions = model.predict(testX)
+    error = mean_absolute_error(predictions, testY)
+
+    print(error)
 
 
 def train_lstm_model(X_train, train_loader, val_loader, test_loader_one):
@@ -168,28 +183,29 @@ def train_lstm_model(X_train, train_loader, val_loader, test_loader_one):
 
 if __name__ == "__main__":
     # Get the train data
-    train_dataX = np.genfromtxt('train_input.csv', delimiter=',')
-    train_dataY = np.genfromtxt('train_output.csv', delimiter=',')
-    train_dataX = np.delete(train_dataX, [900,901,902,903,904,905,906,907,908,909,910,911,912,913,914,915,916,917,918,919,920,921,922,923,924,925,926], axis=0)
+    train_dataX = np.genfromtxt('train_input.csv', delimiter=',', dtype=float)
+    train_dataY = np.genfromtxt('train_output.csv', delimiter=',', dtype=float)
+    train_data_temporalX = np.genfromtxt('train_input_temporal.csv', delimiter=',', dtype=float)
+    train_data_temporalY = np.genfromtxt('train_output_temporal.csv', delimiter=',', dtype=float)
 
     # Get the test data
-    test_dataX = np.genfromtxt('test_input.csv', delimiter=',')
-    test_dataY = np.genfromtxt('test_output.csv', delimiter=',')
-    test_dataX = np.delete(test_dataX, [108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134],axis=0)
+    test_dataX = np.genfromtxt('test_input.csv', delimiter=',', dtype=float)
+    test_dataY = np.genfromtxt('test_output.csv', delimiter=',', dtype=float)
+    test_data_temporalX = np.genfromtxt('test_input_temporal.csv', delimiter=',', dtype=float)
+    test_data_temporalY = np.genfromtxt('test_output_temporal.csv', delimiter=',', dtype=float)
 
-    # train the svr model
-    svm_model, svm_scores = train_svm_model(train_dataX, train_dataY)
-    # Predict the y values for the test data
-    predictions = svm_model.predict(test_dataX)
-    # Calculate the accuracy
-    accuracy = accuracy_score(test_dataY.astype(int), predictions.astype(int))
-    print(accuracy)
+    # Cross validate the svr model
+    cross_validate_svm_model(train_dataX, train_dataY)
 
+    # Fit svr model and predict the y values for the test data
+    fit_predict_svr(train_dataX, train_dataY, test_dataX, test_dataY)
+
+    """
     # put data into tensors
-    train_features = torch.Tensor(train_dataX)
-    train_targets = torch.Tensor(train_dataY)
-    test_features = torch.Tensor(test_dataX)
-    test_targets = torch.Tensor(test_dataY)
+    train_features = torch.Tensor(train_data_temporalX)
+    train_targets = torch.Tensor(train_data_temporalY)
+    test_features = torch.Tensor(test_data_temporalX)
+    test_targets = torch.Tensor(test_data_temporalY)
 
     # make tensor datasets
     train = TensorDataset(train_features, train_targets)
@@ -207,5 +223,6 @@ if __name__ == "__main__":
     # train lstm
     lstm_predictions = train_lstm_model(train_dataX, train_loader, val_loader, test_loader_one)
     print(lstm_predictions)
+    """
 
 
