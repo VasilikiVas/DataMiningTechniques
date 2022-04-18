@@ -134,7 +134,7 @@ class LSTM_optimization:
         plt.close()
 
 
-def cross_validate_svm_model(trainX, trainY):
+def grid_search_svr(trainX, trainY):
     parameters = [
         {"kernel": ["rbf"], "gamma": [1e-1, 1e-2, 1e-3, 1e-4], "C": [0.1, 1, 10, 100, 1000]},
         {"kernel": ["linear"], "C": [0.1, 1, 10, 100, 1000]},
@@ -195,7 +195,7 @@ if __name__ == "__main__":
     test_data_temporalY = np.genfromtxt('test_output_temporal.csv', delimiter=',', dtype=float)
 
     # Cross validate the svr model
-    cross_validate_svm_model(train_dataX, train_dataY)
+    grid_search_svr(train_dataX, train_dataY)
 
     # Fit svr model and predict the y values for the test data
     fit_predict_svr(train_dataX, train_dataY, test_dataX, test_dataY)
