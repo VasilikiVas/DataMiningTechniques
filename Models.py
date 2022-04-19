@@ -12,12 +12,13 @@ import torch.optim as optim
 from datetime import datetime
 import matplotlib.pyplot as plt
 import numpy as np
+from tqdm.auto import tqdm
 
 torch.manual_seed(1)
 
 
 class LSTM_Model(nn.Module):
-    def __init__(self, input_dim, hidden_dim, layer_dim, output_dim, dropout_prob):
+    def __init__(self, input_dim, hidden_dim, layer_dim, output_dim):
         super(LSTM_Model, self).__init__()
 
         # Defining the number of layers and the nodes in each layer
@@ -25,28 +26,14 @@ class LSTM_Model(nn.Module):
         self.layer_dim = layer_dim
 
         # LSTM layers
-        self.lstm = nn.LSTM(
-            input_dim, hidden_dim, layer_dim, batch_first=True, dropout=dropout_prob
-        )
+        self.lstm = nn.LSTM(input_dim, hidden_dim, batch_first=True)
 
         # Fully connected layer
         self.fc = nn.Linear(hidden_dim, output_dim)
 
     def forward(self, x):
-        # Initializing hidden state for first input with zeros
-        h0 = torch.zeros(self.layer_dim, x.size(0), self.hidden_dim).requires_grad_()
-
-        # Initializing cell state for first input with zeros
-        c0 = torch.zeros(self.layer_dim, x.size(0), self.hidden_dim).requires_grad_()
-
-        # Forward propagation by passing in the input, hidden state, and cell state into the model
-        out, (hn, cn) = self.lstm(x, (h0.detach(), c0.detach()))
-
-        # Reshaping the outputs in the shape of (batch_size, seq_length, hidden_size)
-        # so that it can fit into the fully connected layer
-        out = out[:, -1, :]
-
-        # Convert the final state to our desired output shape (batch_size, output_dim)
+        hidden = (torch.zeros(self.layer_dim, x.size(0), self.hidden_dim), torch.zeros(self.layer_dim, x.size(0), self.hidden_dim))  # clean out hidden state
+        out, hidden = self.lstm(x, hidden)
         out = self.fc(out)
 
         return out
@@ -67,7 +54,7 @@ class LSTM_optimization:
         # Makes predictions
         yhat = self.model(x)
 
-        # Computes loss
+        # Compute loss
         loss = self.loss_fn(y, yhat)
 
         # Computes gradients
@@ -80,12 +67,10 @@ class LSTM_optimization:
         # Returns the loss
         return loss.item()
 
-    def train(self, train_loader, val_loader, batch_size=64, n_epochs=50, n_features=1):
-        model_path = f'models/LSTM_{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
-
+    def train(self, train_loader, val_loader, batch_size=64, n_epochs=50, n_features=14):
         for epoch in range(1, n_epochs + 1):
             batch_losses = []
-            for x_batch, y_batch in train_loader:
+            for x_batch, y_batch in tqdm(train_loader, desc=f"Epoch {epoch}", leave=False):
                 x_batch = x_batch.view([batch_size, -1, n_features])
                 y_batch = y_batch
                 loss = self.train_step(x_batch, y_batch)
@@ -105,12 +90,8 @@ class LSTM_optimization:
                 validation_loss = np.mean(batch_val_losses)
                 self.val_losses.append(validation_loss)
 
-            if (epoch <= 10) | (epoch % 50 == 0):
-                print(
-                    f"[{epoch}/{n_epochs}] Training loss: {training_loss:.4f}\t Validation loss: {validation_loss:.4f}"
-                )
 
-        torch.save(self.model.state_dict(), model_path)
+            print(f"[{epoch}/{n_epochs}] Training loss: {training_loss:.4f}\t Validation loss: {validation_loss:.4f}")
 
     def evaluate(self, test_loader, batch_size=1, n_features=1):
         with torch.no_grad():
@@ -121,9 +102,10 @@ class LSTM_optimization:
                 y_test = y_test
                 self.model.eval()
                 yhat = self.model(x_test)
-                predictions.append(yhat.numpy())
+                predictions.append(yhat[0][0].numpy())
                 values.append(y_test.numpy())
-
+        error = mean_absolute_error(predictions, values)
+        print(f'MAE: {error}')
         return predictions, values
 
     def plot_losses(self):
@@ -164,27 +146,25 @@ def predict_baseline(test_temporalY):
     print(error)
 
 
-def train_lstm_model(X_train, train_loader, val_loader, test_loader_one):
+def train_lstm_model(X_train, train_loader, val_loader, test_loader):
     input_dim = len(X_train[1])
     output_dim = 1
     hidden_dim = 64
-    layer_dim = 3
-    batch_size = 64
-    dropout = 0.2
-    n_epochs = 100
+    layer_dim = 1
+    batch_size = 5
+    n_epochs = 30
     learning_rate = 1e-3
-    weight_decay = 1e-6
 
-    model = LSTM_Model(input_dim, hidden_dim, layer_dim, output_dim, dropout)
+    model = LSTM_Model(input_dim, hidden_dim, layer_dim, output_dim)
 
-    loss_fn = nn.MSELoss(reduction="mean")
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    loss_fn = nn.MSELoss()
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     opt = LSTM_optimization(model=model, loss_fn=loss_fn, optimizer=optimizer)
     opt.train(train_loader, val_loader, batch_size=batch_size, n_epochs=n_epochs, n_features=input_dim)
     opt.plot_losses()
 
-    predictions, values = opt.evaluate(test_loader_one, batch_size=1, n_features=input_dim)
+    predictions, values = opt.evaluate(test_loader, batch_size=1, n_features=input_dim)
 
     return predictions
 
@@ -193,14 +173,14 @@ if __name__ == "__main__":
     # Get the train data
     train_dataX = np.genfromtxt('train_input.csv', delimiter=',', dtype=float)
     train_dataY = np.genfromtxt('train_output.csv', delimiter=',', dtype=float)
-    train_data_temporalX = np.genfromtxt('train_input_temporal.csv', delimiter=',', dtype=float)
-    train_data_temporalY = np.genfromtxt('train_output_temporal.csv', delimiter=',', dtype=float)
+    train_data_temporalX = np.genfromtxt('train_input_temporal.csv', delimiter=',', dtype=np.float32)
+    train_data_temporalY = np.genfromtxt('train_output_temporal.csv', delimiter=',', dtype=np.float32)
 
     # Get the test data
     test_dataX = np.genfromtxt('test_input.csv', delimiter=',', dtype=float)
     test_dataY = np.genfromtxt('test_output.csv', delimiter=',', dtype=float)
-    test_data_temporalX = np.genfromtxt('test_input_temporal.csv', delimiter=',', dtype=float)
-    test_data_temporalY = np.genfromtxt('test_output_temporal.csv', delimiter=',', dtype=float)
+    test_data_temporalX = np.genfromtxt('test_input_temporal.csv', delimiter=',', dtype=np.float32)
+    test_data_temporalY = np.genfromtxt('test_output_temporal.csv', delimiter=',', dtype=np.float32)
 
     # Predict with baseline
     predict_baseline(test_data_temporalY)
@@ -211,10 +191,9 @@ if __name__ == "__main__":
     # Fit svr model and predict the y values for the test data
     fit_predict_svr(train_dataX, train_dataY, test_dataX, test_dataY)
 
-    """
     # put data into tensors
     train_features = torch.Tensor(train_data_temporalX)
-    train_targets = torch.Tensor(train_data_temporalY)
+    train_targets = torch.tensor(train_data_temporalY)
     test_features = torch.Tensor(test_data_temporalX)
     test_targets = torch.Tensor(test_data_temporalY)
 
@@ -223,15 +202,15 @@ if __name__ == "__main__":
     test = TensorDataset(test_features, test_targets)
 
     # Split the train data into train and val
-    train, val = torch.utils.data.random_split(train, [800,100])
+    train, val = torch.utils.data.random_split(train, [763,191])
 
     # make dataloaders
-    train_loader = DataLoader(train, batch_size=64, shuffle=False, drop_last=True)
-    val_loader = DataLoader(val, batch_size=64, shuffle=False, drop_last=True)
-    test_loader = DataLoader(test, batch_size=64, shuffle=False, drop_last=True)
-    test_loader_one = DataLoader(test, batch_size=1, shuffle=False, drop_last=True)
+    train_loader = DataLoader(train, batch_size=5, shuffle=False, drop_last=True)
+    val_loader = DataLoader(val, batch_size=5, shuffle=False, drop_last=True)
+    test_loader = DataLoader(test, batch_size=1, shuffle=False, drop_last=True)
 
     # train lstm
-    lstm_predictions = train_lstm_model(train_dataX, train_loader, val_loader, test_loader_one)
-    print(lstm_predictions)
-    """
+    lstm_predictions = train_lstm_model(train_data_temporalX, train_loader, val_loader, test_loader)
+
+
+
