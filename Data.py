@@ -1,3 +1,5 @@
+import functools
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -5,7 +7,7 @@ import math
 from scipy.stats.mstats import spearmanr
 from collections import Counter
 from datetime import timedelta
-from sklearn.preprocessing import MinMaxScaler, Normalizer
+from sklearn.preprocessing import MinMaxScaler, Normalizer, OneHotEncoder
 
 
 def get_raw_data():
@@ -68,6 +70,10 @@ def feature_importance_analysis(data):
                 print(f'Spearmans correlation coefficient of {attribute}: %.3f' % coef)
                 print(f'Samples are correlated for attribute: {attribute} (reject H0) p=%.3f' % p)
     print(uncorrelated)
+
+
+def my_w_avg(s, weights):
+    return np.average(s, weights=weights)
 
 
 class DataLoader:
@@ -143,13 +149,13 @@ class DataLoader:
 
         # Get summary statistics
         # Show number of entries per attribute
-        pd.DataFrame(preprocessed_data['variable'].value_counts()).plot.bar(xlabel='Attribute',
-                                                                            ylabel='Number of Entries',
-                                                                            title="Histogram of Attributes",
-                                                                            legend=None,
-                                                                            figsize=(10, 7))
-        plt.show()
-        plt.clf()
+        #pd.DataFrame(preprocessed_data['variable'].value_counts()).plot.bar(xlabel='Attribute',
+        #                                                                    ylabel='Number of Entries',
+        #                                                                    title="Histogram of Attributes",
+        #                                                                    legend=None,
+        #                                                                    figsize=(10, 7))
+        #plt.show()
+        #plt.clf()
 
         return preprocessed_data
 
@@ -195,7 +201,7 @@ class DataLoader:
         for index, variable_name in enumerate(self.time_features):
             if train:
                 self.q_lows[index] = data.loc[data['variable'] == variable_name].value.quantile(0.00)
-                self.q_highs[index] = data.loc[data['variable'] == variable_name].value.quantile(0.75)
+                self.q_highs[index] = data.loc[data['variable'] == variable_name].value.quantile(0.8)
 
             data = data.drop(data[(data.variable == variable_name) & (
                     (data.value < self.q_lows[index]) | (data.value > self.q_highs[index]))].index)
@@ -272,7 +278,7 @@ class DataLoader:
 
         return data_compact
 
-    def add_features(self, raw_data, data):
+    def add_features(self, data, raw_data):
         """
         Add "sleep" and "weekend" features.
         :param raw_data: Data from which amount of sleep is determined.
@@ -280,7 +286,25 @@ class DataLoader:
         :return: Dataframe with added features.
         """
 
-        pass
+        for index, row in data.iterrows():
+            id = index[0]
+            sleep_start = index[1] - timedelta(days=1) + timedelta(hours=20)
+            sleep_end = index[1] + timedelta(hours=14)
+            id_data = raw_data[raw_data['id'] == id]
+            sleep_start_period = id_data[(id_data['time'] >= sleep_start) & (
+                        id_data['time'] <= sleep_start + timedelta(hours=6))]
+            sleep_end_period = id_data[(id_data['time'] >= sleep_end - timedelta(hours=10)) & (
+                        id_data['time'] <= sleep_end)]
+            sleep = sleep_end_period["time"].quantile(0.05) - sleep_start_period["time"].quantile(0.95)
+            data.at[index, "sleep"] = sleep.total_seconds()
+            data.at[index, "weekend"] = float(index[1].dayofweek // 5 == 1)
+            """
+            nr_ids = np.zeros(len(self.ids))
+            nr_ids[np.where(self.ids == id)[0][0]] = 1
+            for i in range(len(self.ids)):
+                data.at[index, str(i)] = nr_ids[i]
+            """
+        return data
 
     def interpolate_values(self, data):
         """
@@ -291,6 +315,8 @@ class DataLoader:
 
         for var in self.mean_vars:
             data[var] = data[var].interpolate().ffill().bfill()
+        data["sleep"] = data["sleep"].interpolate().ffill().bfill()
+
         data = data.fillna(0)
 
         return data
@@ -311,11 +337,19 @@ class DataLoader:
             series = data.loc[[i]]
             for start_row in range(len(series) - window_size):
                 window = series[start_row:start_row + window_size]
-                window = window.agg({'mood': 'mean', 'circumplex.arousal': 'mean', 'circumplex.valence': 'mean',
-                                     'activity': 'mean', 'screen': 'sum', 'call': 'sum', 'sms': 'sum',
+                window = window.agg({'mood': functools.partial(my_w_avg, weights=[1, 2, 3]),
+                                     'circumplex.arousal': functools.partial(my_w_avg, weights=[1, 2, 3]),
+                                     'circumplex.valence': functools.partial(my_w_avg, weights=[1, 2, 3]),
+                                     'activity': functools.partial(my_w_avg, weights=[1, 2, 3]), 'screen': 'sum',
                                      'appCat.builtin': 'sum', 'appCat.communication': 'sum', 'appCat.other': 'sum',
                                      'appCat.social': 'sum', 'appCat.work': 'sum', 'appCat.leisure': 'sum',
-                                     'appCat.utility': 'sum'})
+                                     'appCat.utility': 'sum',
+                                     'sleep': functools.partial(my_w_avg, weights=[1, 2, 3]), 'weekend': 'sum'})
+                                     #'0': 'mean', '1': 'mean', '2': 'mean', '3': 'mean', '4': 'mean', '5': 'mean',
+                                     #'6': 'mean', '7': 'mean', '8': 'mean', '9': 'mean', '10': 'mean', '11': 'mean',
+                                     #'12': 'mean', '13': 'mean', '14': 'mean', '15': 'mean', '16': 'mean', '17': 'mean',
+                                     #'18': 'mean', '19': 'mean', '20': 'mean', '21': 'mean', '22': 'mean', '23': 'mean',
+                                     #'24': 'mean', '25': 'mean', '26': 'mean'})
 
                 input.append(window.values.tolist())
 
@@ -364,20 +398,24 @@ if __name__ == "__main__":
 
     # prepare train data
     train_data = data_loader.remove_outliers(train_data, train=True)
-    show_feature_distribution(train_data, data_loader.all_vars, False)
+    #show_feature_distribution(train_data, data_loader.all_vars, False)
     train_data = data_loader.get_structured_data(train_data)
     train_data = data_loader.combine_features(train_data)
     train_data = data_loader.remove_unreported_periods(train_data)
+    train_data = data_loader.add_features(train_data, raw_data)
     train_data = data_loader.interpolate_values(train_data)
+    train_data = train_data.drop(['call', 'sms'], axis=1)
     data_loader.window_aggregation(train_data, set="train")
 
     # prepare test data
     test_data = data_loader.remove_outliers(test_data, train=False)
-    show_feature_distribution(test_data, data_loader.all_vars, False)
+    #show_feature_distribution(test_data, data_loader.all_vars, False)
     test_data = data_loader.get_structured_data(test_data)
     test_data = data_loader.combine_features(test_data)
     test_data = data_loader.remove_unreported_periods(test_data)
+    test_data = data_loader.add_features(test_data, raw_data)
     test_data = data_loader.interpolate_values(test_data)
+    test_data = test_data.drop(['call', 'sms'], axis=1)
     data_loader.window_aggregation(test_data, set="test")
 
     # Analyze features

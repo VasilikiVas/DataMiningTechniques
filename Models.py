@@ -15,6 +15,7 @@ import numpy as np
 
 torch.manual_seed(1)
 
+
 class LSTM_Model(nn.Module):
     def __init__(self, input_dim, hidden_dim, layer_dim, output_dim, dropout_prob):
         super(LSTM_Model, self).__init__()
@@ -156,6 +157,13 @@ def fit_predict_svr(trainX, trainY, testX, testY):
     print(error)
 
 
+def predict_baseline(test_temporalY):
+    predictions = test_temporalY[:-1]
+    error = mean_absolute_error(predictions, test_temporalY[1:])
+
+    print(error)
+
+
 def train_lstm_model(X_train, train_loader, val_loader, test_loader_one):
     input_dim = len(X_train[1])
     output_dim = 1
@@ -194,6 +202,9 @@ if __name__ == "__main__":
     test_data_temporalX = np.genfromtxt('test_input_temporal.csv', delimiter=',', dtype=float)
     test_data_temporalY = np.genfromtxt('test_output_temporal.csv', delimiter=',', dtype=float)
 
+    # Predict with baseline
+    predict_baseline(test_data_temporalY)
+
     # Cross validate the svr model
     grid_search_svr(train_dataX, train_dataY)
 
@@ -224,5 +235,3 @@ if __name__ == "__main__":
     lstm_predictions = train_lstm_model(train_dataX, train_loader, val_loader, test_loader_one)
     print(lstm_predictions)
     """
-
-
