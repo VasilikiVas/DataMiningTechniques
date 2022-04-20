@@ -90,8 +90,8 @@ class LSTM_optimization:
                 validation_loss = np.mean(batch_val_losses)
                 self.val_losses.append(validation_loss)
 
-
             print(f"[{epoch}/{n_epochs}] Training loss: {training_loss:.4f}\t Validation loss: {validation_loss:.4f}")
+        return validation_loss
 
     def evaluate(self, test_loader, batch_size=1, n_features=1):
         with torch.no_grad():
@@ -147,24 +147,37 @@ def predict_baseline(test_temporalY):
 
 
 def train_lstm_model(X_train, train_loader, val_loader, test_loader):
-    input_dim = len(X_train[1])
-    output_dim = 1
-    hidden_dim = 64
-    layer_dim = 1
-    batch_size = 5
-    n_epochs = 30
-    learning_rate = 1e-3
+    config = {"input_dim" : len(X_train[1]), "output_dim": 1, "hidden_dim" : [16, 32, 50, 64, 80, 128],
+              "layer_dim" : 1, "batch_size" : 1, "n_epochs": [10,20,30,40,50], "lr": [1e-1, 1e-2, 2e-2, 5e-2, 1e-3, 2e-3, 5e-3, 1e-4]}
 
-    model = LSTM_Model(input_dim, hidden_dim, layer_dim, output_dim)
+    best_val_loss = 10000
+    best_hd = 0
+    best_lr = 0
+    for hd in config['hidden_dim']:
+        for lr in config['lr']:
+            model = LSTM_Model(config['input_dim'], hd, config['layer_dim'], config['output_dim'])
 
+            loss_fn = nn.MSELoss()
+
+            optimizer = optim.Adam(model.parameters(), lr=lr)
+
+            opt = LSTM_optimization(model=model, loss_fn=loss_fn, optimizer=optimizer)
+            val_loss = opt.train(train_loader, val_loader, batch_size=config['batch_size'], n_epochs=20, n_features=config['input_dim'])
+            # opt.plot_losses()
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_hd = hd
+                best_lr = lr
+
+    print(f'best hidden dim is {best_hd}, best learning rate is {best_lr}')
+    model = LSTM_Model(config['input_dim'], best_hd, config['layer_dim'], config['output_dim'])
     loss_fn = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-
+    optimizer = optim.Adam(model.parameters(), lr=best_lr)
     opt = LSTM_optimization(model=model, loss_fn=loss_fn, optimizer=optimizer)
-    opt.train(train_loader, val_loader, batch_size=batch_size, n_epochs=n_epochs, n_features=input_dim)
+    val_loss = opt.train(train_loader, val_loader, batch_size=config['batch_size'], n_epochs=30,
+                         n_features=config['input_dim'])
     opt.plot_losses()
-
-    predictions, values = opt.evaluate(test_loader, batch_size=1, n_features=input_dim)
+    predictions, values = opt.evaluate(test_loader, batch_size=1, n_features=config['input_dim'])
 
     return predictions
 
@@ -183,13 +196,13 @@ if __name__ == "__main__":
     test_data_temporalY = np.genfromtxt('test_output_temporal.csv', delimiter=',', dtype=np.float32)
 
     # Predict with baseline
-    predict_baseline(test_data_temporalY)
+    # predict_baseline(test_data_temporalY)
 
     # Cross validate the svr model
-    grid_search_svr(train_dataX, train_dataY)
+    # grid_search_svr(train_dataX, train_dataY)
 
     # Fit svr model and predict the y values for the test data
-    fit_predict_svr(train_dataX, train_dataY, test_dataX, test_dataY)
+    # fit_predict_svr(train_dataX, train_dataY, test_dataX, test_dataY)
 
     # put data into tensors
     train_features = torch.Tensor(train_data_temporalX)
@@ -205,8 +218,8 @@ if __name__ == "__main__":
     train, val = torch.utils.data.random_split(train, [763,191])
 
     # make dataloaders
-    train_loader = DataLoader(train, batch_size=5, shuffle=False, drop_last=True)
-    val_loader = DataLoader(val, batch_size=5, shuffle=False, drop_last=True)
+    train_loader = DataLoader(train, batch_size=1, shuffle=False, drop_last=True)
+    val_loader = DataLoader(val, batch_size=1, shuffle=False, drop_last=True)
     test_loader = DataLoader(test, batch_size=1, shuffle=False, drop_last=True)
 
     # train lstm
