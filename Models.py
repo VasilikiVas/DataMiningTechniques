@@ -68,6 +68,7 @@ class LSTM_optimization:
         return loss.item()
 
     def train(self, train_loader, val_loader, batch_size=1, n_epochs=50, n_features=14):
+        best_val_loss = 100000
         for epoch in range(1, n_epochs + 1):
             batch_losses = []
             for x_batch, y_batch in tqdm(train_loader, desc=f"Epoch {epoch}", leave=False):
@@ -88,10 +89,12 @@ class LSTM_optimization:
                     val_loss = self.loss_fn(y_val, yhat).item()
                     batch_val_losses.append(val_loss)
                 validation_loss = np.mean(batch_val_losses)
+                if validation_loss < best_val_loss:
+                    best_val_loss = validation_loss
                 self.val_losses.append(validation_loss)
 
             print(f"[{epoch}/{n_epochs}] Training loss: {training_loss:.4f}\t Validation loss: {validation_loss:.4f}")
-        return validation_loss
+        return best_val_loss
 
     def evaluate(self, test_loader, batch_size=1, n_features=1):
         with torch.no_grad():
@@ -146,14 +149,14 @@ def predict_baseline(test_temporalY):
     print(error)
 
 
-def train_lstm_model(X_train, Y_train, train_loader, val_loader, test_loader):
-    config = {"input_dim" : len(X_train[1]), "output_dim": 1, "hidden_dim" : [16, 32, 50, 64, 80, 128],
-              "layer_dim" : 1, "batch_size" : 1, "n_epochs": [10,20,30,40,50], "lr": [1e-1, 1e-2, 2e-2, 5e-2, 1e-3, 2e-3, 5e-3, 1e-4]}
+def train_lstm_model(X_train, Y_train, full_train_loader, full_val_loader, test_loader):
+    config = {"input_dim" : len(X_train[1]), "output_dim": 1, "hidden_dim" : [32, 50, 64],
+              "layer_dim" : 1, "batch_size" : 1, "n_epochs": [10,20,30,40,50], "lr": [1e-2, 5e-2, 1e-3, 5e-3, 1e-4]}
 
     best_val_loss = 10000
     best_hd = 0
     best_lr = 0
-    k_fold = KFold(n_splits=5, shuffle=True, random_state=0)
+    k_fold = KFold(n_splits=2, shuffle=True, random_state=0)
 
     # K-fold Cross Validation model evaluation
     for fold, (train_index, val_index) in enumerate(k_fold.split(X_train)):
@@ -162,11 +165,11 @@ def train_lstm_model(X_train, Y_train, train_loader, val_loader, test_loader):
         print('--------------------------------')
 
         # Sample elements randomly from a given list of ids, no replacement.
-        train_subsampler = torch.utils.data.SubsetRandomSampler(train_index)
-        val_subsampler = torch.utils.data.SubsetRandomSampler(val_index)
+        train_subsampler = torch.utils.data.SequentialSampler(train_index)
+        val_subsampler = torch.utils.data.SequentialSampler(val_index)
 
-        train_features, train_targets = torch.Tensor(train_data_temporalX), torch.Tensor(train_data_temporalY)
-        val_features, val_targets = torch.Tensor(train_data_temporalX), torch.Tensor(train_data_temporalY)
+        train_features, train_targets = torch.Tensor(X_train), torch.Tensor(Y_train)
+        val_features, val_targets = torch.Tensor(X_train), torch.Tensor(Y_train)
 
         train_data = TensorDataset(train_features, train_targets)
         val_data = TensorDataset(val_features, val_targets)
@@ -195,7 +198,7 @@ def train_lstm_model(X_train, Y_train, train_loader, val_loader, test_loader):
     loss_fn = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=best_lr)
     opt = LSTM_optimization(model=model, loss_fn=loss_fn, optimizer=optimizer)
-    val_loss = opt.train(train_loader, val_loader, batch_size=config['batch_size'], n_epochs=30,
+    val_loss = opt.train(full_train_loader, full_val_loader, batch_size=config['batch_size'], n_epochs=20,
                          n_features=config['input_dim'])
     opt.plot_losses()
     predictions, values = opt.evaluate(test_loader, batch_size=1, n_features=config['input_dim'])
@@ -235,8 +238,9 @@ if __name__ == "__main__":
     train = TensorDataset(train_features, train_targets)
     test = TensorDataset(test_features, test_targets)
 
+    print(len(train))
     # Split the train data into train and val
-    train, val = torch.utils.data.random_split(train, [763,191])
+    train_not_used, val = torch.utils.data.random_split(train, [763,192])
 
     # make dataloaders
     train_loader = DataLoader(train, batch_size=1, shuffle=False, drop_last=True)
