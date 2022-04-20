@@ -67,7 +67,7 @@ class LSTM_optimization:
         # Returns the loss
         return loss.item()
 
-    def train(self, train_loader, val_loader, batch_size=64, n_epochs=50, n_features=14):
+    def train(self, train_loader, val_loader, batch_size=1, n_epochs=50, n_features=14):
         for epoch in range(1, n_epochs + 1):
             batch_losses = []
             for x_batch, y_batch in tqdm(train_loader, desc=f"Epoch {epoch}", leave=False):
@@ -146,28 +146,49 @@ def predict_baseline(test_temporalY):
     print(error)
 
 
-def train_lstm_model(X_train, train_loader, val_loader, test_loader):
+def train_lstm_model(X_train, Y_train, train_loader, val_loader, test_loader):
     config = {"input_dim" : len(X_train[1]), "output_dim": 1, "hidden_dim" : [16, 32, 50, 64, 80, 128],
               "layer_dim" : 1, "batch_size" : 1, "n_epochs": [10,20,30,40,50], "lr": [1e-1, 1e-2, 2e-2, 5e-2, 1e-3, 2e-3, 5e-3, 1e-4]}
 
     best_val_loss = 10000
     best_hd = 0
     best_lr = 0
-    for hd in config['hidden_dim']:
-        for lr in config['lr']:
-            model = LSTM_Model(config['input_dim'], hd, config['layer_dim'], config['output_dim'])
+    k_fold = KFold(n_splits=5, shuffle=True, random_state=0)
 
-            loss_fn = nn.MSELoss()
+    # K-fold Cross Validation model evaluation
+    for fold, (train_index, val_index) in enumerate(k_fold.split(X_train)):
+        # Print
+        print(f'FOLD {fold}')
+        print('--------------------------------')
 
-            optimizer = optim.Adam(model.parameters(), lr=lr)
+        # Sample elements randomly from a given list of ids, no replacement.
+        train_subsampler = torch.utils.data.SubsetRandomSampler(train_index)
+        val_subsampler = torch.utils.data.SubsetRandomSampler(val_index)
 
-            opt = LSTM_optimization(model=model, loss_fn=loss_fn, optimizer=optimizer)
-            val_loss = opt.train(train_loader, val_loader, batch_size=config['batch_size'], n_epochs=20, n_features=config['input_dim'])
-            # opt.plot_losses()
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                best_hd = hd
-                best_lr = lr
+        train_features, train_targets = torch.Tensor(train_data_temporalX), torch.Tensor(train_data_temporalY)
+        val_features, val_targets = torch.Tensor(train_data_temporalX), torch.Tensor(train_data_temporalY)
+
+        train_data = TensorDataset(train_features, train_targets)
+        val_data = TensorDataset(val_features, val_targets)
+
+        train_loader = DataLoader(train_data, batch_size=1, shuffle=False, drop_last=True, sampler=train_subsampler)
+        val_loader = DataLoader(val_data, batch_size=1, shuffle=False, drop_last=True, sampler=val_subsampler)
+
+        for hd in config['hidden_dim']:
+            for lr in config['lr']:
+                model = LSTM_Model(config['input_dim'], hd, config['layer_dim'], config['output_dim'])
+
+                loss_fn = nn.MSELoss()
+
+                optimizer = optim.Adam(model.parameters(), lr=lr)
+
+                opt = LSTM_optimization(model=model, loss_fn=loss_fn, optimizer=optimizer)
+                val_loss = opt.train(train_loader, val_loader, batch_size=config['batch_size'], n_epochs=20, n_features=config['input_dim'])
+                # opt.plot_losses()
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    best_hd = hd
+                    best_lr = lr
 
     print(f'best hidden dim is {best_hd}, best learning rate is {best_lr}')
     model = LSTM_Model(config['input_dim'], best_hd, config['layer_dim'], config['output_dim'])
@@ -223,7 +244,7 @@ if __name__ == "__main__":
     test_loader = DataLoader(test, batch_size=1, shuffle=False, drop_last=True)
 
     # train lstm
-    lstm_predictions = train_lstm_model(train_data_temporalX, train_loader, val_loader, test_loader)
+    lstm_predictions = train_lstm_model(train_data_temporalX, train_data_temporalY, train_loader, val_loader,test_loader)
 
 
 
