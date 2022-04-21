@@ -1,5 +1,6 @@
 import functools
 
+import seaborn as sns
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -8,6 +9,8 @@ from scipy.stats.mstats import spearmanr
 from collections import Counter
 from datetime import timedelta
 from sklearn.preprocessing import MinMaxScaler, Normalizer, OneHotEncoder
+from scipy.stats import norm
+from scipy import stats
 
 
 def get_raw_data():
@@ -31,19 +34,31 @@ def show_feature_distribution(data, features, structured_data=False):
     :param structured_data: Indicates whether data is in structured or unstructured format.
     """
 
-    num = 1
-    fig = plt.figure(figsize=(30, 15))
     for var in features:
-        ax = fig.add_subplot(5, 4, num)
         if structured_data:
-            hist = np.asarray(data[var])
+            sns.distplot(data[data[var] > 0][var], fit=norm)
         else:
-            hist = list(data.loc[data['variable'] == var].value)
-        ax.hist(hist, bins=50)
-        ax.set_xlabel('Value')
-        ax.set_ylabel('Number of Entries')
-        ax.set_title('Distribution of ' + var)
-        num += 1
+            sns.distplot(data.loc[data['variable'] == var].value, fit=norm)
+        plt.show()
+        plt.clf()
+
+    for var in features:
+        if structured_data:
+            stats.probplot(data[data[var] > 0][var], plot=plt)
+        else:
+            stats.probplot(data.loc[data['variable'] == var].value, plot=plt)
+        plt.show()
+        plt.clf()
+
+
+def show_boxplot(data):
+    sns.boxplot(data=data, orient="h")
+    plt.show()
+    plt.clf()
+
+
+def show_cross_correlation(data):
+    sns.heatmap(data.corr(), vmin=-1, vmax=1)
     plt.show()
     plt.clf()
 
@@ -141,6 +156,8 @@ class DataLoader:
                 elif row['value'] < 0 or row['value'] > 86400:
                     invalid_values[feature_name] += 1
                     raw_data.at[index, "value"] = np.nan
+                elif row['value'] != 0:
+                    raw_data.at[index, "value"] = np.log(row['value'])
 
         print(invalid_values)
         print(NaN_values)
@@ -149,13 +166,13 @@ class DataLoader:
 
         # Get summary statistics
         # Show number of entries per attribute
-        #pd.DataFrame(preprocessed_data['variable'].value_counts()).plot.bar(xlabel='Attribute',
+        # pd.DataFrame(preprocessed_data['variable'].value_counts()).plot.bar(xlabel='Attribute',
         #                                                                    ylabel='Number of Entries',
         #                                                                    title="Histogram of Attributes",
         #                                                                    legend=None,
         #                                                                    figsize=(10, 7))
-        #plt.show()
-        #plt.clf()
+        # plt.show()
+        # plt.clf()
 
         return preprocessed_data
 
@@ -184,12 +201,23 @@ class DataLoader:
         for id, days_train, start_date, end_date in zip(self.ids, nr_days_train, start, end):
             id_data = data[data['id'] == id]
             train_data = pd.concat([train_data, id_data[(id_data['time'].dt.date >= start_date) & (
-                        id_data['time'].dt.date <= start_date + timedelta(days=days_train))]])
+                    id_data['time'].dt.date <= start_date + timedelta(days=days_train))]])
             test_data = pd.concat([test_data, id_data[
                 (id_data['time'].dt.date >= start_date + timedelta(days=days_train) + timedelta(days=1)) & (
-                            id_data['time'].dt.date <= end_date)]])
+                        id_data['time'].dt.date <= end_date)]])
 
         return train_data, test_data
+
+    def log_transform(self, data):
+        log_features = ['screen', 'appCat.builtin', 'appCat.communication', 'appCat.other', 'appCat.social',
+                        'appCat.work', 'appCat.leisure', 'appCat.utility']
+
+        for var in log_features:
+            data[var] = np.log(data[var], where=(data[var] != 0))
+
+        data.replace([np.inf, -np.inf], 0, inplace=True)
+
+        return data
 
     def remove_outliers(self, data, train=True):
         """
@@ -290,20 +318,16 @@ class DataLoader:
             id = index[0]
             sleep_start = index[1] - timedelta(days=1) + timedelta(hours=20)
             sleep_end = index[1] + timedelta(hours=14)
-            id_data = raw_data[raw_data['id'] == id]
+            variables = ['mood', 'circumplex.arousal', 'circumplex.valence']
+            id_data = raw_data[(raw_data['id'] == id) & (raw_data['variable'].isin(variables))]
             sleep_start_period = id_data[(id_data['time'] >= sleep_start) & (
-                        id_data['time'] <= sleep_start + timedelta(hours=6))]
+                    id_data['time'] <= sleep_start + timedelta(hours=6))]
             sleep_end_period = id_data[(id_data['time'] >= sleep_end - timedelta(hours=10)) & (
-                        id_data['time'] <= sleep_end)]
-            sleep = sleep_end_period["time"].quantile(0.05) - sleep_start_period["time"].quantile(0.95)
+                    id_data['time'] <= sleep_end)]
+            sleep = sleep_end_period["time"].min() - sleep_start_period["time"].max()
             data.at[index, "sleep"] = sleep.total_seconds()
             data.at[index, "weekend"] = float(index[1].dayofweek // 5 == 1)
-            """
-            nr_ids = np.zeros(len(self.ids))
-            nr_ids[np.where(self.ids == id)[0][0]] = 1
-            for i in range(len(self.ids)):
-                data.at[index, str(i)] = nr_ids[i]
-            """
+
         return data
 
     def interpolate_values(self, data):
@@ -315,7 +339,7 @@ class DataLoader:
 
         for var in self.mean_vars:
             data[var] = data[var].interpolate().ffill().bfill()
-        data["sleep"] = data["sleep"].interpolate().ffill().bfill()
+        # data["sleep"] = data["sleep"].interpolate().ffill().bfill()
 
         data = data.fillna(0)
 
@@ -344,12 +368,8 @@ class DataLoader:
                                      'appCat.builtin': 'sum', 'appCat.communication': 'sum', 'appCat.other': 'sum',
                                      'appCat.social': 'sum', 'appCat.work': 'sum', 'appCat.leisure': 'sum',
                                      'appCat.utility': 'sum',
-                                     'sleep': functools.partial(my_w_avg, weights=[1, 2, 3]), 'weekend': 'sum'})
-                                     #'0': 'mean', '1': 'mean', '2': 'mean', '3': 'mean', '4': 'mean', '5': 'mean',
-                                     #'6': 'mean', '7': 'mean', '8': 'mean', '9': 'mean', '10': 'mean', '11': 'mean',
-                                     #'12': 'mean', '13': 'mean', '14': 'mean', '15': 'mean', '16': 'mean', '17': 'mean',
-                                     #'18': 'mean', '19': 'mean', '20': 'mean', '21': 'mean', '22': 'mean', '23': 'mean',
-                                     #'24': 'mean', '25': 'mean', '26': 'mean'})
+                                     'sleep': functools.partial(my_w_avg, weights=[1, 2, 3]),
+                                     'weekend': 'sum'})
 
                 input.append(window.values.tolist())
 
@@ -369,10 +389,31 @@ class DataLoader:
         input = self.scaler.transform(input)
         input_temporal = self.scaler_temporal.transform(input_temporal)
 
+        lengths_train = [38, 29, 40, 43, 37, 39, 44, 31, 33, 42, 35, 45, 43, 38, 37, 33, 34, 46, 26, 38, 35, 33, 34, 38,
+                         29, 35, 37]
+        lengths_test = [8, 4, 7, 9, 8, 8, 9, 6, 7, 9, 5, 9, 9, 7, 8, 7, 6, 10, 5, 8, 7, 6, 7, 8, 4, 5, 8]
+
+        if set == "train":
+            pad = np.zeros((len(self.ids), 46, len(data.columns))) - 10
+            count = 0
+            for id in range(len(self.ids)):
+                for length in range(lengths_train[id] - 1):
+                    pad[id, length, :] = input_temporal[count]
+                    count += 1
+        else:
+            pad = np.zeros((len(self.ids), 10, len(data.columns))) - 10
+            count = 0
+            for id in range(len(self.ids)):
+                for length in range(lengths_test[id] - 1):
+                    pad[id, length, :] = input_temporal[count]
+                    count += 1
+
         input = pd.DataFrame(input)
         input.to_csv(set + "_input.csv", index=False, header=False)
 
-        input_temporal = pd.DataFrame(input_temporal)
+        pad = pad.reshape(pad.shape[0] * pad.shape[1], pad.shape[2])
+
+        input_temporal = pd.DataFrame(pad)
         input_temporal.to_csv(set + "_input_temporal.csv", index=False, header=False)
 
         output = pd.DataFrame(output)
@@ -387,34 +428,40 @@ if __name__ == "__main__":
     data_loader = DataLoader()
     raw_data = data_loader.raw_data
     raw_data = data_loader.remove_invalid_data(raw_data)
+    show_feature_distribution(raw_data, features=data_loader.time_features, structured_data=False)
 
     # Prepare appropriate active period windows
     preprocessed_data = data_loader.get_structured_data(raw_data)
-    preprocessed_data = data_loader.combine_features(preprocessed_data)
+    # preprocessed_data = data_loader.combine_features(preprocessed_data)
     preprocessed_data = data_loader.remove_unreported_periods(preprocessed_data)
+    show_cross_correlation(preprocessed_data)
+    preprocessed_data = data_loader.interpolate_values(preprocessed_data)
+    #show_feature_distribution(preprocessed_data, features=data_loader.all_vars, structured_data=True)
+    # preprocessed_data = data_loader.log_transform(preprocessed_data)
+    # show_feature_distribution(preprocessed_data, features=data_loader.all_vars, structured_data=True)
 
     # split data
     train_data, test_data = data_loader.get_split(raw_data)
 
     # prepare train data
-    train_data = data_loader.remove_outliers(train_data, train=True)
-    #show_feature_distribution(train_data, data_loader.all_vars, False)
+    # train_data = data_loader.remove_outliers(train_data, train=True)
     train_data = data_loader.get_structured_data(train_data)
     train_data = data_loader.combine_features(train_data)
     train_data = data_loader.remove_unreported_periods(train_data)
     train_data = data_loader.add_features(train_data, raw_data)
     train_data = data_loader.interpolate_values(train_data)
+    # train_data = data_loader.log_transform(train_data)
     train_data = train_data.drop(['call', 'sms'], axis=1)
     data_loader.window_aggregation(train_data, set="train")
 
     # prepare test data
-    test_data = data_loader.remove_outliers(test_data, train=False)
-    #show_feature_distribution(test_data, data_loader.all_vars, False)
+    # test_data = data_loader.remove_outliers(test_data, train=False)
     test_data = data_loader.get_structured_data(test_data)
     test_data = data_loader.combine_features(test_data)
     test_data = data_loader.remove_unreported_periods(test_data)
     test_data = data_loader.add_features(test_data, raw_data)
     test_data = data_loader.interpolate_values(test_data)
+    # test_data = data_loader.log_transform(test_data)
     test_data = test_data.drop(['call', 'sms'], axis=1)
     data_loader.window_aggregation(test_data, set="test")
 
