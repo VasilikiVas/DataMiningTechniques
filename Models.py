@@ -1,124 +1,17 @@
-# fetch data, make model, train, cross-validation, test, predict
 from sklearn.svm import SVR
-from sklearn.model_selection import cross_val_score
 from sklearn.model_selection import KFold
-from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.metrics import mean_absolute_error
 from sklearn.model_selection import GridSearchCV
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import TensorDataset, DataLoader
-import torch.optim as optim
-from datetime import datetime
 import matplotlib.pyplot as plt
 import numpy as np
-from tqdm.auto import tqdm
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense
+from tensorflow.keras.layers import LSTM
+from keras.wrappers.scikit_learn import KerasClassifier
+from tensorflow.keras.optimizers import Adam
+from tensorflow import random
 
-torch.manual_seed(1)
-
-
-class LSTM_Model(nn.Module):
-    def __init__(self, input_dim, hidden_dim, layer_dim, output_dim):
-        super(LSTM_Model, self).__init__()
-
-        # Defining the number of layers and the nodes in each layer
-        self.hidden_dim = hidden_dim
-        self.layer_dim = layer_dim
-
-        # LSTM layers
-        self.lstm = nn.LSTM(input_dim, hidden_dim, batch_first=True)
-
-        # Fully connected layer
-        self.fc = nn.Linear(hidden_dim, output_dim)
-
-    def forward(self, x):
-        hidden = (torch.zeros(self.layer_dim, x.size(0), self.hidden_dim), torch.zeros(self.layer_dim, x.size(0), self.hidden_dim))  # clean out hidden state
-        out, hidden = self.lstm(x, hidden)
-        out = self.fc(out)
-
-        return out
-
-
-class LSTM_optimization:
-    def __init__(self, model, loss_fn, optimizer):
-        self.model = model
-        self.loss_fn = loss_fn
-        self.optimizer = optimizer
-        self.train_losses = []
-        self.val_losses = []
-
-    def train_step(self, x, y):
-        # Sets model to train mode
-        self.model.train()
-
-        # Makes predictions
-        yhat = self.model(x)
-
-        # Compute loss
-        loss = self.loss_fn(y, yhat)
-
-        # Computes gradients
-        loss.backward()
-
-        # Updates parameters and zeroes gradients
-        self.optimizer.step()
-        self.optimizer.zero_grad()
-
-        # Returns the loss
-        return loss.item()
-
-    def train(self, train_loader, val_loader, batch_size=1, n_epochs=50, n_features=14):
-        best_val_loss = 100000
-        for epoch in range(1, n_epochs + 1):
-            batch_losses = []
-            for x_batch, y_batch in tqdm(train_loader, desc=f"Epoch {epoch}", leave=False):
-                x_batch = x_batch.view([batch_size, -1, n_features])
-                y_batch = y_batch
-                loss = self.train_step(x_batch, y_batch)
-                batch_losses.append(loss)
-            training_loss = np.mean(batch_losses)
-            self.train_losses.append(training_loss)
-
-            with torch.no_grad():
-                batch_val_losses = []
-                for x_val, y_val in val_loader:
-                    x_val = x_val.view([batch_size, -1, n_features])
-                    y_val = y_val
-                    self.model.eval()
-                    yhat = self.model(x_val)
-                    val_loss = self.loss_fn(y_val, yhat).item()
-                    batch_val_losses.append(val_loss)
-                validation_loss = np.mean(batch_val_losses)
-                if validation_loss < best_val_loss:
-                    best_val_loss = validation_loss
-                self.val_losses.append(validation_loss)
-
-            print(f"[{epoch}/{n_epochs}] Training loss: {training_loss:.4f}\t Validation loss: {validation_loss:.4f}")
-        return best_val_loss
-
-    def evaluate(self, test_loader, batch_size=1, n_features=1):
-        with torch.no_grad():
-            predictions = []
-            values = []
-            for x_test, y_test in test_loader:
-                x_test = x_test.view([batch_size, -1, n_features])
-                y_test = y_test
-                self.model.eval()
-                yhat = self.model(x_test)
-                predictions.append(yhat[0][0].numpy())
-                values.append(y_test.numpy())
-        error = mean_absolute_error(predictions, values)
-        print(f'MAE: {error}')
-        return predictions, values
-
-    def plot_losses(self):
-        plt.plot(self.train_losses, label="Training loss")
-        plt.plot(self.val_losses, label="Validation loss")
-        plt.legend()
-        plt.title("Losses")
-        plt.show()
-        plt.close()
-
+random.set_seed(5)
 
 def grid_search_svr(trainX, trainY):
     parameters = [
@@ -127,7 +20,7 @@ def grid_search_svr(trainX, trainY):
     ]
 
     k_fold = KFold(n_splits=5, shuffle=True, random_state=0)
-    model = GridSearchCV(SVR(), parameters, cv=k_fold, scoring='neg_mean_absolute_error')
+    model = GridSearchCV(SVR(), parameters, cv=k_fold, scoring='neg_mean_squared_error')
     model.fit(trainX, trainY)
 
     print(model.best_params_)
@@ -139,116 +32,113 @@ def fit_predict_svr(trainX, trainY, testX, testY):
     predictions = model.predict(testX)
     error = mean_absolute_error(predictions, testY)
 
-    print(error)
+    print(f'svr {error}')
 
 
 def predict_baseline(test_temporalY):
     predictions = test_temporalY[:-1]
     error = mean_absolute_error(predictions, test_temporalY[1:])
 
-    print(error)
+    print(f'baseline {error}')
 
 
-def train_lstm_model(X_train, Y_train, full_train_loader, full_val_loader, test_loader):
-    config = {"input_dim" : len(X_train[1]), "output_dim": 1, "hidden_dim" : [32, 50, 64],
-              "layer_dim" : 1, "batch_size" : 1, "n_epochs": [10,20,30,40,50], "lr": [1e-2, 5e-2, 1e-3, 5e-3, 1e-4]}
+def create_model(lr, hidden_size, nfeatures=13):
+    model = Sequential()
+    model.add(LSTM(hidden_size, input_shape=(3, nfeatures)))
+    model.add(Dense(1))
+    optimizer = Adam(learning_rate=lr)
+    model.compile(loss='mse', optimizer=optimizer,metrics=["mae"])
+    return model
 
-    best_val_loss = 10000
-    best_hd = 0
-    best_lr = 0
-    k_fold = KFold(n_splits=2, shuffle=True, random_state=0)
 
-    # K-fold Cross Validation model evaluation
-    for fold, (train_index, val_index) in enumerate(k_fold.split(X_train)):
-        # Print
-        print(f'FOLD {fold}')
-        print('--------------------------------')
+def grid_search_lstm(trainX, trainY):
+    model = KerasClassifier(build_fn=create_model)
 
-        # Sample elements randomly from a given list of ids, no replacement.
-        train_subsampler = torch.utils.data.SequentialSampler(train_index)
-        val_subsampler = torch.utils.data.SequentialSampler(val_index)
+    epochs = (50,60,70, 100, 150)
+    lrs = (1e-2, 5e-2, 1e-3, 5e-3, 1e-4, 5e-4)
+    hidden_size = (32, 64, 128, 256, 500, 1000)
+    batch_size = (10,30,40,50)
+    param_grid = dict(nb_epoch=epochs, lr=lrs, hidden_size=hidden_size, batch_size=batch_size)
 
-        train_features, train_targets = torch.Tensor(X_train), torch.Tensor(Y_train)
-        val_features, val_targets = torch.Tensor(X_train), torch.Tensor(Y_train)
+    k_fold = KFold(n_splits=5, shuffle=True, random_state=0)
+    grid = GridSearchCV(estimator=model, param_grid=param_grid, cv=k_fold, scoring='neg_mean_squared_error')
+    grid_result = grid.fit(trainX, trainY)
 
-        train_data = TensorDataset(train_features, train_targets)
-        val_data = TensorDataset(val_features, val_targets)
+    print(f"Best: {grid_result.best_score_} using {grid_result.best_params_}")
 
-        train_loader = DataLoader(train_data, batch_size=1, shuffle=False, drop_last=True, sampler=train_subsampler)
-        val_loader = DataLoader(val_data, batch_size=1, shuffle=False, drop_last=True, sampler=val_subsampler)
 
-        for hd in config['hidden_dim']:
-            for lr in config['lr']:
-                model = LSTM_Model(config['input_dim'], hd, config['layer_dim'], config['output_dim'])
+def fit_predict_lstm(trainX, trainY, testX, testY, batch_size, n_epochs):
+    model = create_model(lr=0.005,hidden_size=32)
 
-                loss_fn = nn.MSELoss()
+    model.summary()
 
-                optimizer = optim.Adam(model.parameters(), lr=lr)
+    model.fit(trainX, trainY, epochs=n_epochs, batch_size=batch_size)
+    predictions = model.predict(testX)
+    print(predictions)
+    error = mean_absolute_error(predictions, testY)
 
-                opt = LSTM_optimization(model=model, loss_fn=loss_fn, optimizer=optimizer)
-                val_loss = opt.train(train_loader, val_loader, batch_size=config['batch_size'], n_epochs=20, n_features=config['input_dim'])
-                # opt.plot_losses()
-                if val_loss < best_val_loss:
-                    best_val_loss = val_loss
-                    best_hd = hd
-                    best_lr = lr
-
-    print(f'best hidden dim is {best_hd}, best learning rate is {best_lr}')
-    model = LSTM_Model(config['input_dim'], best_hd, config['layer_dim'], config['output_dim'])
-    loss_fn = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=best_lr)
-    opt = LSTM_optimization(model=model, loss_fn=loss_fn, optimizer=optimizer)
-    val_loss = opt.train(full_train_loader, full_val_loader, batch_size=config['batch_size'], n_epochs=20,
-                         n_features=config['input_dim'])
-    opt.plot_losses()
-    predictions, values = opt.evaluate(test_loader, batch_size=1, n_features=config['input_dim'])
-
-    return predictions
+    print(f'lstm: {error}')
 
 
 if __name__ == "__main__":
     # Get the train data
-    train_dataX = np.genfromtxt('train_input.csv', delimiter=',', dtype=float)
-    train_dataY = np.genfromtxt('train_output.csv', delimiter=',', dtype=float)
-    train_data_temporalX = np.genfromtxt('train_input_temporal.csv', delimiter=',', dtype=np.float32)
-    train_data_temporalY = np.genfromtxt('train_output_temporal.csv', delimiter=',', dtype=np.float32)
+    train_dataX = np.genfromtxt('Data/Model Comparison/train_input.csv', delimiter=',', dtype=float)
+    train_dataY = np.genfromtxt('Data/Model Comparison/train_output.csv', delimiter=',', dtype=float)
+    train_data_temporalX = np.genfromtxt('Data/Model Comparison/train_input_temporal.csv', delimiter=',', dtype=np.float32)
+    train_data_temporalY = np.genfromtxt('Data/Model Comparison/train_output_temporal.csv', delimiter=',', dtype=np.float32)
 
     # Get the test data
-    test_dataX = np.genfromtxt('test_input.csv', delimiter=',', dtype=float)
-    test_dataY = np.genfromtxt('test_output.csv', delimiter=',', dtype=float)
-    test_data_temporalX = np.genfromtxt('test_input_temporal.csv', delimiter=',', dtype=np.float32)
-    test_data_temporalY = np.genfromtxt('test_output_temporal.csv', delimiter=',', dtype=np.float32)
+    test_dataX = np.genfromtxt('Data/Model Comparison/test_input.csv', delimiter=',', dtype=float)
+    test_dataY = np.genfromtxt('Data/Model Comparison/test_output.csv', delimiter=',', dtype=float)
+    test_data_temporalX = np.genfromtxt('Data/Model Comparison/test_input_temporal.csv', delimiter=',', dtype=np.float32)
+    test_data_temporalY = np.genfromtxt('Data/Model Comparison/test_output_temporal.csv', delimiter=',', dtype=np.float32)
+
+    lengths_train = [38, 29, 40, 43, 37, 39, 44, 31, 33, 42, 35, 45, 43, 38, 37, 33, 34, 46, 26, 38, 35, 33, 34, 38,
+                     29, 35, 37]
+    lengths_test = [8, 4, 7, 9, 8, 8, 9, 6, 7, 9, 5, 9, 9, 7, 8, 7, 6, 10, 5, 8, 7, 6, 7, 8, 4, 5, 8]
+    window_size = 3
+
+    train_input = []
+    train_output = []
+    test_input = []
+    test_output = []
+
+    count = 0
+    for i in lengths_train:
+        for start_row in range(i - window_size):
+            window = train_data_temporalX[start_row + count:start_row + window_size + count]
+
+            train_input.append(list(window))
+
+        train_output += list(train_data_temporalY[count + window_size:count+i])
+        count += i
+
+    count = 0
+    for i in lengths_test:
+        for start_row in range(i - window_size):
+            window = test_data_temporalX[start_row + count:start_row + window_size + count]
+
+            test_input.append(list(window))
+
+        test_output += list(test_data_temporalY[count + window_size:count + i])
+        count += i
+
+    train_input = np.asarray(train_input)
+    train_output = np.asarray(train_output)
+    test_input = np.asarray(test_input)
+    test_output = np.asarray(test_output)
+
+    print(train_input.shape, train_output.shape, test_input.shape, test_output.shape)
+
+    # grid_search_lstm(train_input, train_output)
+
+    fit_predict_lstm(train_input, train_output, test_input, test_output, batch_size=10, n_epochs=60)
 
     # Predict with baseline
-    # predict_baseline(test_data_temporalY)
+    predict_baseline(test_data_temporalY)
 
     # Cross validate the svr model
     # grid_search_svr(train_dataX, train_dataY)
 
     # Fit svr model and predict the y values for the test data
-    # fit_predict_svr(train_dataX, train_dataY, test_dataX, test_dataY)
-
-    # put data into tensors
-    train_features = torch.Tensor(train_data_temporalX)
-    train_targets = torch.tensor(train_data_temporalY)
-    test_features = torch.Tensor(test_data_temporalX)
-    test_targets = torch.Tensor(test_data_temporalY)
-
-    # make tensor datasets
-    train = TensorDataset(train_features, train_targets)
-    test = TensorDataset(test_features, test_targets)
-
-    print(len(train))
-    # Split the train data into train and val
-    train_not_used, val = torch.utils.data.random_split(train, [763,192])
-
-    # make dataloaders
-    train_loader = DataLoader(train, batch_size=1, shuffle=False, drop_last=True)
-    val_loader = DataLoader(val, batch_size=1, shuffle=False, drop_last=True)
-    test_loader = DataLoader(test, batch_size=1, shuffle=False, drop_last=True)
-
-    # train lstm
-    lstm_predictions = train_lstm_model(train_data_temporalX, train_data_temporalY, train_loader, val_loader,test_loader)
-
-
-
+    fit_predict_svr(train_dataX, train_dataY, test_dataX, test_dataY)
