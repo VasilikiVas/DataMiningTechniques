@@ -1,5 +1,5 @@
 # DataMiningTechniques 2022
-Our task is to predict what hotel a user is most likely to book. This could greatly help companies such as Expedia (from which the dataset actually originates) to organize the search results for a user in the most suitable way. This assignment was an internal competition, where my team ranked as 2nd between 173 groups. 
+Our task is to predict what hotel a user is most likely to book. This could greatly help companies such as Expedia (from which the dataset actually originates) to organize the search results for a user in the most suitable way. This assignment was an internal competition, where my team ranked 2nd among 173 groups. 
 
 ## Detailed Task Description
 To make things easier, we'll use a DM process model to describe your task in a bit more detail:
